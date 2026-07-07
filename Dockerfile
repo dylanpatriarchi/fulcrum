@@ -15,7 +15,7 @@ FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=build /out/fulcrum /fulcrum
 COPY config.example.yaml /config.yaml
-EXPOSE 8080
+EXPOSE 8080 9090
 USER nonroot:nonroot
 ENTRYPOINT ["/fulcrum"]
 CMD ["-config", "/config.yaml"]
