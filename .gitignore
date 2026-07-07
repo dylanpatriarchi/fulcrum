@@ -1,0 +1,21 @@
+# Binaries
+/bin/
+/dist/
+/fulcrum
+*.exe
+*.test
+*.out
+
+# Coverage
+coverage.txt
+coverage.html
+*.prof
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local config overrides
+config.local.yaml

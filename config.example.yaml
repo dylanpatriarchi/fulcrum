@@ -1,0 +1,25 @@
+# Fulcrum example configuration.
+listen: ":8080"
+
+# Load-balancing strategy:
+#   round-robin | weighted | least-connections | random | ip-hash
+strategy: round-robin
+
+backends:
+  - url: "http://127.0.0.1:9001"
+    weight: 1
+  - url: "http://127.0.0.1:9002"
+    weight: 3   # only honoured by the "weighted" strategy
+
+health_check:
+  interval: 10s
+  timeout: 2s
+  path: /healthz
+  healthy_threshold: 2      # consecutive successes to mark a backend UP
+  unhealthy_threshold: 3    # consecutive failures to mark a backend DOWN
+
+proxy:
+  request_timeout: 30s
+  max_retries: 2                # failover attempts (0 disables retry)
+  max_in_flight_per_backend: 0  # cap of concurrent requests per backend (0 = unlimited)
+  retry_non_idempotent: false   # retry POST/PATCH/etc. on failure
