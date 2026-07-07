@@ -68,38 +68,86 @@ func TestIPHash_DistributesAcrossClients(t *testing.T) {
 	}
 }
 
+func TestIPHash_TrustFlagSelectsIPSource(t *testing.T) {
+	backends := []*Backend{
+		mustBackend(t, "http://a.com"),
+		mustBackend(t, "http://b.com"),
+		mustBackend(t, "http://c.com"),
+	}
+	r, _ := http.NewRequest(http.MethodGet, "http://proxy/", nil)
+	r.RemoteAddr = "1.1.1.1:1000"
+	r.Header.Set("X-Forwarded-For", "2.2.2.2")
+
+	// trust=false → hash the TCP peer (1.1.1.1).
+	got, err := ipHash{trustForwarded: false}.Next(r, backends)
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if want := backends[fnv1a32("1.1.1.1")%uint32(len(backends))]; got != want {
+		t.Errorf("trust=false routed to %s, want the RemoteAddr-hashed backend %s", got, want)
+	}
+
+	// trust=true → hash the forwarded client (2.2.2.2).
+	got, err = ipHash{trustForwarded: true}.Next(r, backends)
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if want := backends[fnv1a32("2.2.2.2")%uint32(len(backends))]; got != want {
+		t.Errorf("trust=true routed to %s, want the XFF-hashed backend %s", got, want)
+	}
+}
+
 func TestClientIP(t *testing.T) {
 	tests := []struct {
 		name       string
 		remoteAddr string
 		headers    map[string]string
+		trust      bool
 		want       string
 	}{
 		{name: "remote addr ipv4", remoteAddr: "192.168.1.5:12345", want: "192.168.1.5"},
 		{name: "remote addr ipv6", remoteAddr: "[2001:db8::1]:443", want: "2001:db8::1"},
 		{name: "remote addr no port", remoteAddr: "noport", want: "noport"},
 		{
-			name:       "x-forwarded-for wins",
+			name:       "xff ignored when not trusted",
 			remoteAddr: "10.0.0.1:9999",
 			headers:    map[string]string{"X-Forwarded-For": "203.0.113.9"},
+			trust:      false,
+			want:       "10.0.0.1", // header not trusted → TCP peer
+		},
+		{
+			name:       "xff honoured when trusted",
+			remoteAddr: "10.0.0.1:9999",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.9"},
+			trust:      true,
 			want:       "203.0.113.9",
 		},
 		{
-			name:       "x-forwarded-for leftmost of chain",
+			name:       "xff leftmost of chain",
 			remoteAddr: "10.0.0.1:9999",
-			headers:    map[string]string{"X-Forwarded-For": "203.0.113.9, 70.41.3.18, 150.172.238.178"},
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.9, 70.41.3.18"},
+			trust:      true,
 			want:       "203.0.113.9",
 		},
 		{
-			name:       "x-real-ip fallback",
+			name:       "blank xff falls back to real-ip",
 			remoteAddr: "10.0.0.1:9999",
-			headers:    map[string]string{"X-Real-IP": "198.51.100.4"},
+			headers:    map[string]string{"X-Forwarded-For": " , ", "X-Real-IP": "198.51.100.4"},
+			trust:      true,
 			want:       "198.51.100.4",
 		},
 		{
-			name:       "x-forwarded-for preferred over x-real-ip",
+			name:       "empty xff falls back to remote addr",
+			remoteAddr: "10.0.0.1:9999",
+			headers:    map[string]string{"X-Forwarded-For": ""},
+			trust:      true,
+			want:       "10.0.0.1",
+		},
+		{
+			name:       "xff preferred over real-ip",
 			remoteAddr: "10.0.0.1:9999",
 			headers:    map[string]string{"X-Forwarded-For": "203.0.113.9", "X-Real-IP": "198.51.100.4"},
+			trust:      true,
 			want:       "203.0.113.9",
 		},
 	}
@@ -109,12 +157,12 @@ func TestClientIP(t *testing.T) {
 			for k, v := range tt.headers {
 				r.Header.Set(k, v)
 			}
-			if got := clientIP(r); got != tt.want {
-				t.Errorf("clientIP() = %q, want %q", got, tt.want)
+			if got := clientIP(r, tt.trust); got != tt.want {
+				t.Errorf("clientIP(trust=%v) = %q, want %q", tt.trust, got, tt.want)
 			}
 		})
 	}
-	if got := clientIP(nil); got != "" {
+	if got := clientIP(nil, true); got != "" {
 		t.Errorf("clientIP(nil) = %q, want empty", got)
 	}
 }

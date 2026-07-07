@@ -19,7 +19,7 @@ type weighted struct {
 }
 
 func init() {
-	register("weighted", func() Strategy {
+	register("weighted", func(Options) Strategy {
 		return &weighted{current: make(map[*Backend]int)}
 	})
 }
@@ -33,8 +33,6 @@ func (w *weighted) Next(_ *http.Request, candidates []*Backend) (*Backend, error
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-
-	w.pruneAbsent(candidates)
 
 	var (
 		best   *Backend
@@ -52,6 +50,12 @@ func (w *weighted) Next(_ *http.Request, candidates []*Backend) (*Backend, error
 	// The winner "pays" the total weight, so lower-weight peers catch up on
 	// subsequent calls.
 	w.current[best] -= total
+
+	// Prune AFTER populating current for every candidate: at this point current
+	// is a superset of candidates, so len(current) > len(candidates) exactly when
+	// stale (absent) backends remain. This is robust even when one backend leaves
+	// and another rejoins in the same round (equal sizes but different membership).
+	w.pruneAbsent(candidates)
 	return reserve(best)
 }
 
@@ -60,7 +64,8 @@ func (w *weighted) Next(_ *http.Request, candidates []*Backend) (*Backend, error
 // check marks it down) keeps its stale — possibly deeply negative — current
 // weight and, on return, is either starved or burst-served, drifting the served
 // ratio away from the configured weights. Pruning lets a returning backend
-// restart fair at zero. The guard keeps the steady state (no churn) allocation-free.
+// restart fair at zero. It must be called after current is populated for all
+// candidates so the size comparison is a correct staleness test.
 func (w *weighted) pruneAbsent(candidates []*Backend) {
 	if len(w.current) <= len(candidates) {
 		return

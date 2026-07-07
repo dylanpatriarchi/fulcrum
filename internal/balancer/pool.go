@@ -55,7 +55,7 @@ func (p *Pool) Healthy() []*Backend {
 func (p *Pool) SetHealthy(b *Backend, v bool) (changed bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !b.SetHealthy(v) {
+	if !b.setHealthy(v) {
 		return false
 	}
 	p.rebuild()

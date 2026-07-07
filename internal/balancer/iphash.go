@@ -14,48 +14,65 @@ import (
 // backend joins or leaves the healthy set, the modulo mapping shifts for some
 // clients. That is the inherent trade-off of hash-based stickiness without a
 // consistent-hash ring.
-type ipHash struct{}
+type ipHash struct {
+	// trustForwarded enables deriving the client IP from forwarding headers.
+	// When false (default), only the TCP peer address is used, so clients cannot
+	// forge X-Forwarded-For to steer their own routing.
+	trustForwarded bool
+}
 
 func init() {
-	register("ip-hash", func() Strategy { return ipHash{} })
+	register("ip-hash", func(o Options) Strategy {
+		return ipHash{trustForwarded: o.TrustForwardedHeaders}
+	})
 }
 
 func (ipHash) Name() string { return "ip-hash" }
 
-func (ipHash) Next(r *http.Request, candidates []*Backend) (*Backend, error) {
+func (h ipHash) Next(r *http.Request, candidates []*Backend) (*Backend, error) {
 	n := len(candidates)
 	if n == 0 {
 		return nil, ErrNoHealthyBackends
 	}
-	idx := fnv1a32(clientIP(r)) % uint32(n)
+	idx := fnv1a32(clientIP(r, h.trustForwarded)) % uint32(n)
 	return reserve(candidates[idx])
 }
 
-// clientIP determines the client's IP for sticky hashing. When Fulcrum sits
-// behind another proxy/LB/CDN, the TCP peer is that proxy, so a forwarding
-// header carries the real client. We honour X-Forwarded-For (leftmost entry =
-// original client) then X-Real-IP, falling back to the TCP peer address.
+// clientIP determines the client's IP for sticky hashing.
 //
-// This trusts the forwarding headers; deploy ip-hash behind a proxy you control
-// (which should overwrite, not append, client-supplied values) to avoid clients
-// steering their own stickiness.
-func clientIP(r *http.Request) string {
+// By default it uses the TCP peer address (RemoteAddr). When trustForwarded is
+// set — i.e. Fulcrum is behind a proxy you trust to set forwarding headers — it
+// prefers X-Forwarded-For (leftmost non-empty entry = original client) then
+// X-Real-IP, and only then falls back to RemoteAddr. A blank or malformed
+// forwarding value never collapses everything onto one backend; it falls through
+// to the next source.
+func clientIP(r *http.Request, trustForwarded bool) string {
 	if r == nil {
 		return ""
 	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[:i])
+	if trustForwarded {
+		if ip := leftmostForwarded(r.Header.Get("X-Forwarded-For")); ip != "" {
+			return ip
 		}
-		return strings.TrimSpace(xff)
-	}
-	if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
-		return xr
+		if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
+			return xr
+		}
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
 	}
 	return r.RemoteAddr
+}
+
+// leftmostForwarded returns the first non-empty, trimmed entry of an
+// X-Forwarded-For header value, or "" if there is none.
+func leftmostForwarded(xff string) string {
+	for _, part := range strings.Split(xff, ",") {
+		if ip := strings.TrimSpace(part); ip != "" {
+			return ip
+		}
+	}
+	return ""
 }
 
 // fnv1a32 computes the 32-bit FNV-1a hash of s without allocating (unlike

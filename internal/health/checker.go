@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dylanpatriarchi/fulcrum/internal/balancer"
+	"github.com/dylanpatriarchi/fulcrum/internal/metrics"
 )
 
 // Options configures the active health checker.
@@ -34,10 +35,11 @@ type backendState struct {
 
 // Checker periodically probes the pool's backends and updates their health.
 type Checker struct {
-	pool   *balancer.Pool
-	client *http.Client
-	opts   Options
-	log    *slog.Logger
+	pool    *balancer.Pool
+	client  *http.Client
+	opts    Options
+	log     *slog.Logger
+	metrics *metrics.Metrics
 
 	// state is populated once at construction (keyed by the stable *Backend
 	// pointers) and only its values mutate afterwards, so concurrent reads of
@@ -46,14 +48,15 @@ type Checker struct {
 }
 
 // NewChecker builds a Checker over pool. The pool's backend set is captured at
-// construction (it is fixed for the process lifetime).
-func NewChecker(pool *balancer.Pool, opts Options, logger *slog.Logger) *Checker {
+// construction (it is fixed for the process lifetime). metrics may be nil.
+func NewChecker(pool *balancer.Pool, opts Options, logger *slog.Logger, m *metrics.Metrics) *Checker {
 	state := make(map[*balancer.Backend]*backendState)
 	for _, b := range pool.All() {
 		state[b] = &backendState{}
 	}
 	return &Checker{
-		pool: pool,
+		pool:    pool,
+		metrics: m,
 		// No redirects: a 3xx to a healthy-looking page must not mask a sick
 		// backend. The per-probe timeout is enforced via context, but we also set
 		// a client timeout as a backstop.
@@ -109,6 +112,10 @@ func (c *Checker) probe(ctx context.Context, b *balancer.Backend) bool {
 	target := b.URL.JoinPath(c.opts.Path).String()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
+		// A malformed health target is a configuration problem, not a sick
+		// backend; log it distinctly (it would otherwise mark everything down).
+		c.log.Error("health probe request could not be built",
+			"backend", b.String(), "target", target, "err", err)
 		return false
 	}
 	resp, err := c.client.Do(req)
@@ -116,8 +123,16 @@ func (c *Checker) probe(ctx context.Context, b *balancer.Backend) bool {
 		return false
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body) // drain to allow connection reuse
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false
+	}
+	// Drain the body: a backend that returns 2xx headers but then stalls or
+	// errors mid-body is not actually serving, so a drain failure is a failure.
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return false
+	}
+	return true
 }
 
 // record advances the backend's streak counters and flips its health state once
@@ -133,6 +148,8 @@ func (c *Checker) record(b *balancer.Backend, ok bool) {
 		// rebuilt and the backend re-enters rotation.
 		if !b.Healthy() && s.consecSuccess >= c.opts.HealthyThreshold {
 			if c.pool.SetHealthy(b, true) {
+				b.ResetPassiveFailures()
+				c.metrics.SetBackendUp(b.String(), true)
 				c.log.Info("backend restored to rotation", "backend", b.String())
 			}
 		}
@@ -145,6 +162,7 @@ func (c *Checker) record(b *balancer.Backend, ok bool) {
 	}
 	if b.Healthy() && s.consecFail >= c.opts.UnhealthyThreshold {
 		if c.pool.SetHealthy(b, false) {
+			c.metrics.SetBackendUp(b.String(), false)
 			c.log.Warn("backend removed from rotation", "backend", b.String())
 		}
 	}

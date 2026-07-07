@@ -11,7 +11,7 @@ import (
 type random struct{}
 
 func init() {
-	register("random", func() Strategy { return random{} })
+	register("random", func(Options) Strategy { return random{} })
 }
 
 func (random) Name() string { return "random" }

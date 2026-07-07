@@ -12,7 +12,7 @@ type roundRobin struct {
 }
 
 func init() {
-	register("round-robin", func() Strategy { return &roundRobin{} })
+	register("round-robin", func(Options) Strategy { return &roundRobin{} })
 }
 
 func (rr *roundRobin) Name() string { return "round-robin" }

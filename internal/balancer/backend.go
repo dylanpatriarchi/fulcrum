@@ -19,6 +19,22 @@ type Backend struct {
 
 	healthy atomic.Bool  // current health state; toggled by the health checker
 	active  atomic.Int64 // in-flight requests dispatched to this backend
+
+	// passiveFails counts consecutive request-time failures for passive health
+	// checking; it is reset on the first success.
+	passiveFails atomic.Int64
+
+	// cumulative per-backend statistics.
+	totalRequests atomic.Int64
+	totalFailures atomic.Int64
+}
+
+// Stats is a point-in-time snapshot of a backend's counters.
+type Stats struct {
+	Healthy       bool  `json:"healthy"`
+	ActiveConns   int64 `json:"active_conns"`
+	TotalRequests int64 `json:"total_requests"`
+	TotalFailures int64 `json:"total_failures"`
 }
 
 // NewBackend parses rawURL and returns a Backend that starts in the healthy
@@ -45,8 +61,11 @@ func NewBackend(rawURL string, weight int) (*Backend, error) {
 // Healthy reports whether the backend is currently eligible to serve traffic.
 func (b *Backend) Healthy() bool { return b.healthy.Load() }
 
-// SetHealthy sets the backend's health state and reports whether it changed.
-func (b *Backend) SetHealthy(v bool) (changed bool) {
+// setHealthy sets the backend's health state and reports whether it changed. It
+// is unexported so all health changes flow through Pool.SetHealthy, which keeps
+// the pool's cached healthy snapshot coherent; a direct setter would flip the
+// flag without rebuilding the snapshot and silently fail to reroute traffic.
+func (b *Backend) setHealthy(v bool) (changed bool) {
 	return b.healthy.Swap(v) != v
 }
 
@@ -62,6 +81,35 @@ func (b *Backend) Release() {
 		// Defensive: a Release without a matching Acquire is a bug; clamp so the
 		// least-connections strategy can never see a negative count.
 		b.active.Store(0)
+	}
+}
+
+// RecordSuccess accounts a successful request and clears the passive-failure
+// streak.
+func (b *Backend) RecordSuccess() {
+	b.totalRequests.Add(1)
+	b.passiveFails.Store(0)
+}
+
+// RecordFailure accounts a failed request and returns the new consecutive
+// passive-failure count.
+func (b *Backend) RecordFailure() int64 {
+	b.totalRequests.Add(1)
+	b.totalFailures.Add(1)
+	return b.passiveFails.Add(1)
+}
+
+// ResetPassiveFailures clears the passive-failure streak (e.g. when the backend
+// is brought back into rotation).
+func (b *Backend) ResetPassiveFailures() { b.passiveFails.Store(0) }
+
+// Stats returns a snapshot of the backend's counters.
+func (b *Backend) Stats() Stats {
+	return Stats{
+		Healthy:       b.Healthy(),
+		ActiveConns:   b.active.Load(),
+		TotalRequests: b.totalRequests.Load(),
+		TotalFailures: b.totalFailures.Load(),
 	}
 }
 

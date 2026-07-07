@@ -6,7 +6,7 @@ import (
 )
 
 func TestNew_KnownAndUnknown(t *testing.T) {
-	s, err := New("round-robin")
+	s, err := New("round-robin", Options{})
 	if err != nil {
 		t.Fatalf("New(round-robin): %v", err)
 	}
@@ -14,14 +14,14 @@ func TestNew_KnownAndUnknown(t *testing.T) {
 		t.Errorf("Name() = %q, want round-robin", s.Name())
 	}
 
-	if _, err := New("does-not-exist"); err == nil {
+	if _, err := New("does-not-exist", Options{}); err == nil {
 		t.Error("New(unknown) = nil error, want error")
 	}
 }
 
 func TestNew_ReturnsIndependentInstances(t *testing.T) {
-	a, _ := New("round-robin")
-	b, _ := New("round-robin")
+	a, _ := New("round-robin", Options{})
+	b, _ := New("round-robin", Options{})
 	if a == b {
 		t.Error("New should return a fresh instance each call (independent cursor state)")
 	}
@@ -35,7 +35,7 @@ func TestNames_RegistersAllStrategies(t *testing.T) {
 	}
 	// Every registered name must construct without error.
 	for _, n := range got {
-		if _, err := New(n); err != nil {
+		if _, err := New(n, Options{}); err != nil {
 			t.Errorf("New(%q): %v", n, err)
 		}
 	}

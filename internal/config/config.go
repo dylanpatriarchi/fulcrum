@@ -22,6 +22,8 @@ const (
 	defaultHealthCheckTimeout  = 2 * time.Second
 	defaultRequestTimeout      = 30 * time.Second
 	defaultBackendWeight       = 1
+	defaultPassiveMaxFails     = 3
+	defaultAdminListen         = ":9090"
 )
 
 // Config is the root configuration document.
@@ -31,6 +33,14 @@ type Config struct {
 	Backends    []Backend   `yaml:"backends"`
 	HealthCheck HealthCheck `yaml:"health_check"`
 	Proxy       Proxy       `yaml:"proxy"`
+	Admin       Admin       `yaml:"admin"`
+}
+
+// Admin configures the auxiliary server exposing metrics and liveness.
+type Admin struct {
+	// Listen is the address for the admin server (/metrics, /healthz, /stats).
+	// An empty value disables the admin server.
+	Listen string `yaml:"listen"`
 }
 
 // Backend is a single upstream target.
@@ -54,6 +64,12 @@ type Proxy struct {
 	MaxRetries            int      `yaml:"max_retries"`
 	MaxInFlightPerBackend int      `yaml:"max_in_flight_per_backend"`
 	RetryNonIdempotent    bool     `yaml:"retry_non_idempotent"`
+	// PassiveMaxFails is the number of consecutive request-time failures after
+	// which a backend is passively marked unhealthy (0 disables passive checks).
+	PassiveMaxFails int `yaml:"passive_max_fails"`
+	// TrustForwardedHeaders lets ip-hash use X-Forwarded-For / X-Real-IP for the
+	// client IP. Enable only behind a trusted proxy (default false uses the peer).
+	TrustForwardedHeaders bool `yaml:"trust_forwarded_headers"`
 }
 
 // rawConfig mirrors Config but represents defaultable fields as pointers so we
@@ -66,6 +82,11 @@ type rawConfig struct {
 	Backends    []rawBackend   `yaml:"backends"`
 	HealthCheck rawHealthCheck `yaml:"health_check"`
 	Proxy       rawProxy       `yaml:"proxy"`
+	Admin       rawAdmin       `yaml:"admin"`
+}
+
+type rawAdmin struct {
+	Listen *string `yaml:"listen"`
 }
 
 type rawBackend struct {
@@ -88,6 +109,10 @@ type rawProxy struct {
 	MaxRetries            int       `yaml:"max_retries"`
 	MaxInFlightPerBackend int       `yaml:"max_in_flight_per_backend"`
 	RetryNonIdempotent    bool      `yaml:"retry_non_idempotent"`
+	// PassiveMaxFails defaults to a non-zero value when omitted, so it needs a
+	// pointer to distinguish "omitted" (apply default) from "explicit 0" (off).
+	PassiveMaxFails       *int `yaml:"passive_max_fails"`
+	TrustForwardedHeaders bool `yaml:"trust_forwarded_headers"`
 }
 
 // resolve converts the parsed raw document into a Config, applying defaults for
@@ -109,6 +134,11 @@ func (r *rawConfig) resolve() *Config {
 			MaxRetries:            r.Proxy.MaxRetries,
 			MaxInFlightPerBackend: r.Proxy.MaxInFlightPerBackend,
 			RetryNonIdempotent:    r.Proxy.RetryNonIdempotent,
+			PassiveMaxFails:       orInt(r.Proxy.PassiveMaxFails, defaultPassiveMaxFails),
+			TrustForwardedHeaders: r.Proxy.TrustForwardedHeaders,
+		},
+		Admin: Admin{
+			Listen: orStringPtr(r.Admin.Listen, defaultAdminListen),
 		},
 	}
 	for _, rb := range r.Backends {
@@ -139,6 +169,15 @@ func orString(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// orStringPtr returns def only when the field was omitted (nil). An explicit
+// empty string is preserved (e.g. admin.listen: "" disables the admin server).
+func orStringPtr(p *string, def string) string {
+	if p == nil {
+		return def
+	}
+	return *p
 }
 
 // Load reads, parses and validates a configuration file.
@@ -173,7 +212,7 @@ func (c *Config) Validate() error {
 	// Delegate strategy and backend validity to the balancer package so its
 	// registry and constructor are the single source of truth (no drift between
 	// "accepted in config" and "actually implemented").
-	if _, err := balancer.New(c.Strategy); err != nil {
+	if _, err := balancer.New(c.Strategy, balancer.Options{}); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	if len(c.Backends) == 0 {
@@ -204,6 +243,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Proxy.MaxInFlightPerBackend < 0 {
 		return errors.New("config: proxy.max_in_flight_per_backend must be >= 0")
+	}
+	if c.Proxy.PassiveMaxFails < 0 {
+		return errors.New("config: proxy.passive_max_fails must be >= 0")
 	}
 	return nil
 }

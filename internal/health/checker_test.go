@@ -45,7 +45,7 @@ func newChecker(t *testing.T, pool *balancer.Pool, healthy, unhealthy int) *Chec
 		Timeout:            time.Second,
 		HealthyThreshold:   healthy,
 		UnhealthyThreshold: unhealthy,
-	}, discardLogger())
+	}, discardLogger(), nil)
 }
 
 func assertHealth(t *testing.T, b *balancer.Backend, want bool, when string) {
@@ -139,7 +139,7 @@ func TestChecker_ProbeTimeout(t *testing.T) {
 		Timeout:            50 * time.Millisecond,
 		HealthyThreshold:   1,
 		UnhealthyThreshold: 1,
-	}, discardLogger())
+	}, discardLogger(), nil)
 
 	c.CheckOnce(context.Background())
 	assertHealth(t, b, false, "slow backend beyond timeout")
@@ -200,7 +200,7 @@ func TestChecker_RunStopsOnContextCancel(t *testing.T) {
 		Timeout:            time.Second,
 		HealthyThreshold:   1,
 		UnhealthyThreshold: 1,
-	}, discardLogger())
+	}, discardLogger(), nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

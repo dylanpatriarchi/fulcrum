@@ -44,16 +44,16 @@ func TestNewBackend(t *testing.T) {
 func TestBackend_SetHealthy(t *testing.T) {
 	b, _ := NewBackend("http://a.com", 1)
 
-	if changed := b.SetHealthy(true); changed {
+	if changed := b.setHealthy(true); changed {
 		t.Error("SetHealthy(true) on already-healthy backend reported changed")
 	}
-	if changed := b.SetHealthy(false); !changed {
+	if changed := b.setHealthy(false); !changed {
 		t.Error("SetHealthy(false) should report changed")
 	}
 	if b.Healthy() {
 		t.Error("backend should be unhealthy after SetHealthy(false)")
 	}
-	if changed := b.SetHealthy(false); changed {
+	if changed := b.setHealthy(false); changed {
 		t.Error("SetHealthy(false) on already-unhealthy backend reported changed")
 	}
 }

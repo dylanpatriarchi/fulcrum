@@ -33,11 +33,11 @@ func newTestProxy(t *testing.T, urls ...string) (*Proxy, *balancer.Pool) {
 		backends = append(backends, b)
 	}
 	pool := balancer.NewPool(backends)
-	strategy, err := balancer.New("round-robin")
+	strategy, err := balancer.New("round-robin", balancer.Options{})
 	if err != nil {
 		t.Fatalf("New strategy: %v", err)
 	}
-	return New(pool, strategy, discardLogger()), pool
+	return New(pool, strategy, Options{}, discardLogger(), nil), pool
 }
 
 func TestProxy_ForwardsRequestAndResponse(t *testing.T) {
