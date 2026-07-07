@@ -5,23 +5,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"time"
 
 	"gopkg.in/yaml.v3"
-)
 
-// knownStrategies is the set of balancing strategies accepted in config.
-// The registry that instantiates them lives in the balancer package; this
-// list keeps validation self-contained without importing it (avoids a cycle).
-var knownStrategies = map[string]bool{
-	"round-robin":       true,
-	"weighted":          true,
-	"least-connections": true,
-	"random":            true,
-	"ip-hash":           true,
-}
+	"github.com/dylanpatriarchi/fulcrum/internal/balancer"
+)
 
 // Default values applied when an optional field is omitted from the file.
 const (
@@ -180,25 +170,18 @@ func (c *Config) Validate() error {
 	if c.Listen == "" {
 		return errors.New("config: listen address must not be empty")
 	}
-	if !knownStrategies[c.Strategy] {
-		return fmt.Errorf("config: unknown strategy %q", c.Strategy)
+	// Delegate strategy and backend validity to the balancer package so its
+	// registry and constructor are the single source of truth (no drift between
+	// "accepted in config" and "actually implemented").
+	if _, err := balancer.New(c.Strategy); err != nil {
+		return fmt.Errorf("config: %w", err)
 	}
 	if len(c.Backends) == 0 {
 		return errors.New("config: at least one backend is required")
 	}
 	for i, b := range c.Backends {
-		u, err := url.Parse(b.URL)
-		if err != nil {
-			return fmt.Errorf("config: backend[%d] url %q: %w", i, b.URL, err)
-		}
-		if u.Scheme != "http" && u.Scheme != "https" {
-			return fmt.Errorf("config: backend[%d] url %q: scheme must be http or https", i, b.URL)
-		}
-		if u.Host == "" {
-			return fmt.Errorf("config: backend[%d] url %q: missing host", i, b.URL)
-		}
-		if b.Weight < 1 {
-			return fmt.Errorf("config: backend[%d] weight must be >= 1, got %d", i, b.Weight)
+		if _, err := balancer.NewBackend(b.URL, b.Weight); err != nil {
+			return fmt.Errorf("config: backend[%d]: %w", i, err)
 		}
 	}
 	if c.HealthCheck.Interval <= 0 {
