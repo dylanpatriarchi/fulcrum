@@ -15,12 +15,26 @@ var ErrNoHealthyBackends = errors.New("balancer: no healthy backends available")
 // Candidates are supplied by the caller (the Pool's healthy snapshot) rather
 // than pulled from a shared pool, which keeps strategies decoupled and trivially
 // testable. Implementations must be safe for concurrent use.
+//
+// Reservation contract: Next reserves an in-flight slot on the returned backend
+// (via Backend.Acquire) as part of selection, so the active-connection count is
+// consistent the instant the choice is visible. This is what makes
+// least-connections correct under a simultaneous burst. The caller MUST call
+// Backend.Release exactly once when the request completes.
 type Strategy interface {
 	// Name is the config identifier the strategy is registered under.
 	Name() string
-	// Next returns the chosen backend, or ErrNoHealthyBackends if candidates is
-	// empty. r may be used by request-aware strategies (e.g. ip-hash).
+	// Next returns the chosen (and reserved) backend, or ErrNoHealthyBackends if
+	// candidates is empty. r may be used by request-aware strategies (ip-hash).
 	Next(r *http.Request, candidates []*Backend) (*Backend, error)
+}
+
+// reserve marks an in-flight slot on the chosen backend and returns it. Every
+// strategy funnels its selection through this so the reservation contract is
+// implemented in exactly one place.
+func reserve(b *Backend) (*Backend, error) {
+	b.Acquire()
+	return b, nil
 }
 
 // Factory constructs a fresh Strategy instance (each has its own internal state,

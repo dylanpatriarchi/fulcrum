@@ -21,5 +21,5 @@ func (random) Next(_ *http.Request, candidates []*Backend) (*Backend, error) {
 	if n == 0 {
 		return nil, ErrNoHealthyBackends
 	}
-	return candidates[rand.IntN(n)], nil
+	return reserve(candidates[rand.IntN(n)])
 }

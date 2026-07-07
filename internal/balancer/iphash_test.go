@@ -70,18 +70,49 @@ func TestIPHash_DistributesAcrossClients(t *testing.T) {
 
 func TestClientIP(t *testing.T) {
 	tests := []struct {
+		name       string
 		remoteAddr string
+		headers    map[string]string
 		want       string
 	}{
-		{"192.168.1.5:12345", "192.168.1.5"},
-		{"[2001:db8::1]:443", "2001:db8::1"},
-		{"noport", "noport"}, // fallback when SplitHostPort fails
+		{name: "remote addr ipv4", remoteAddr: "192.168.1.5:12345", want: "192.168.1.5"},
+		{name: "remote addr ipv6", remoteAddr: "[2001:db8::1]:443", want: "2001:db8::1"},
+		{name: "remote addr no port", remoteAddr: "noport", want: "noport"},
+		{
+			name:       "x-forwarded-for wins",
+			remoteAddr: "10.0.0.1:9999",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.9"},
+			want:       "203.0.113.9",
+		},
+		{
+			name:       "x-forwarded-for leftmost of chain",
+			remoteAddr: "10.0.0.1:9999",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.9, 70.41.3.18, 150.172.238.178"},
+			want:       "203.0.113.9",
+		},
+		{
+			name:       "x-real-ip fallback",
+			remoteAddr: "10.0.0.1:9999",
+			headers:    map[string]string{"X-Real-IP": "198.51.100.4"},
+			want:       "198.51.100.4",
+		},
+		{
+			name:       "x-forwarded-for preferred over x-real-ip",
+			remoteAddr: "10.0.0.1:9999",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.9", "X-Real-IP": "198.51.100.4"},
+			want:       "203.0.113.9",
+		},
 	}
 	for _, tt := range tests {
-		r := &http.Request{RemoteAddr: tt.remoteAddr}
-		if got := clientIP(r); got != tt.want {
-			t.Errorf("clientIP(%q) = %q, want %q", tt.remoteAddr, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			r := &http.Request{RemoteAddr: tt.remoteAddr, Header: http.Header{}}
+			for k, v := range tt.headers {
+				r.Header.Set(k, v)
+			}
+			if got := clientIP(r); got != tt.want {
+				t.Errorf("clientIP() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 	if got := clientIP(nil); got != "" {
 		t.Errorf("clientIP(nil) = %q, want empty", got)
