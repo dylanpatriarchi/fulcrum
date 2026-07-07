@@ -61,6 +61,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// NOTE: proxy.max_in_flight_per_backend is parsed and validated but not yet
+	// enforced here; the concurrency cap (reject/shed when a backend is at its
+	// limit) is implemented together with timeouts in Milestone 6.
 	backend.Acquire()
 	defer backend.Release()
 	rp.ServeHTTP(w, r)

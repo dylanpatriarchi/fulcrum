@@ -16,7 +16,7 @@ via a reviewed PR.
 
 - [x] **M1** — Scaffold, YAML config + validation, single-backend reverse proxy
 - [x] **M2** — Pool + `Strategy` interface + round-robin (distribution test)
-- [ ] **M3** — Weighted, least-connections (atomic), random, ip-hash
+- [x] **M3** — Weighted, least-connections (atomic), random, ip-hash
 - [ ] **M4** — Active health checks with a state machine + hysteresis
 - [ ] **M5** — Passive health checks + bounded retry/failover
 - [ ] **M6** — Timeouts, max in-flight, graceful shutdown with draining
@@ -29,6 +29,19 @@ via a reviewed PR.
 make build
 ./bin/fulcrum -config config.example.yaml
 ```
+
+## Balancing strategies
+
+Selected by name in config (`strategy:`). The balancer registry is the single
+source of truth — config validation rejects any name it does not implement.
+
+| Name | Behaviour |
+|------|-----------|
+| `round-robin` | Even rotation via a lock-free atomic cursor. |
+| `weighted` | Smooth weighted round-robin (nginx algorithm); exactly proportional to `weight` over a full cycle, interleaved. |
+| `least-connections` | Fewest in-flight requests, read from atomic per-backend counters. |
+| `random` | Uniform random pick (`math/rand/v2`, concurrency-safe). |
+| `ip-hash` | Sticky sessions: a client IP is hashed (FNV-1a) to a stable backend. |
 
 ## Configuration
 

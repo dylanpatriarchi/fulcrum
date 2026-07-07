@@ -27,32 +27,16 @@ func TestNew_ReturnsIndependentInstances(t *testing.T) {
 	}
 }
 
-func TestNames_IncludesRoundRobin(t *testing.T) {
-	names := Names()
-	found := false
-	for _, n := range names {
-		if n == "round-robin" {
-			found = true
+func TestNames_RegistersAllStrategies(t *testing.T) {
+	want := []string{"ip-hash", "least-connections", "random", "round-robin", "weighted"}
+	got := Names()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Names() = %v, want %v (sorted, complete set)", got, want)
+	}
+	// Every registered name must construct without error.
+	for _, n := range got {
+		if _, err := New(n); err != nil {
+			t.Errorf("New(%q): %v", n, err)
 		}
 	}
-	if !found {
-		t.Errorf("Names() = %v, want to include round-robin", names)
-	}
-	// Names must be sorted.
-	sorted := make([]string, len(names))
-	copy(sorted, names)
-	if !reflect.DeepEqual(names, sortedCopy(names)) {
-		t.Errorf("Names() = %v, want sorted", names)
-	}
-}
-
-func sortedCopy(in []string) []string {
-	out := make([]string, len(in))
-	copy(out, in)
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j-1] > out[j]; j-- {
-			out[j-1], out[j] = out[j], out[j-1]
-		}
-	}
-	return out
 }
