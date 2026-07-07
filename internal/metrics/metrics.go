@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -56,7 +57,7 @@ func New() *Metrics {
 	}
 	m.reg.MustRegister(
 		m.requests, m.duration, m.retries, m.failovers, m.backendUp, m.active,
-		collectors(),
+		processCollectors(),
 	)
 	return m
 }
@@ -112,12 +113,12 @@ func (m *Metrics) SetActive(backend string, n int64) {
 	m.active.WithLabelValues(backend).Set(float64(n))
 }
 
-// collectors returns the standard Go runtime + process collectors bundled so the
-// admin endpoint also exposes process health.
-func collectors() prometheus.Collector {
+// processCollectors returns the standard Go runtime + process collectors bundled
+// so the admin endpoint also exposes process health.
+func processCollectors() prometheus.Collector {
 	return collectorSet{
-		prometheus.NewGoCollector(),
-		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	}
 }
 
