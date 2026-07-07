@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"time"
 
+	"github.com/dylanpatriarchi/fulcrum/internal/balancer"
 	"github.com/dylanpatriarchi/fulcrum/internal/config"
 )
 
@@ -18,27 +18,44 @@ type Server struct {
 	log  *slog.Logger
 }
 
-// NewServer builds a Server from cfg.
-//
-// Milestone 1 forwards to the first configured backend only; the pool- and
-// strategy-aware handler arrives in Milestone 2.
+// NewServer builds a Server from cfg: it constructs the backend pool, the
+// configured strategy and the balancing proxy handler.
 func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
-	if len(cfg.Backends) == 0 {
-		return nil, fmt.Errorf("proxy: no backends configured")
-	}
-	target, err := url.Parse(cfg.Backends[0].URL)
+	pool, err := poolFromConfig(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("proxy: parse backend url %q: %w", cfg.Backends[0].URL, err)
+		return nil, err
+	}
+	strategy, err := balancer.New(cfg.Strategy)
+	if err != nil {
+		return nil, fmt.Errorf("proxy: %w", err)
 	}
 
+	handler := New(pool, strategy, logger)
 	srv := &http.Server{
 		Addr:    cfg.Listen,
-		Handler: SingleBackend(target, logger),
+		Handler: handler,
 		// Guard against slowloris-style header stalls; full per-request timeouts
-		// land in Milestone 6.
+		// land in a later milestone.
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return &Server{http: srv, log: logger}, nil
+}
+
+// poolFromConfig builds the backend pool from configuration, parsing each URL
+// exactly once (config.Validate already guaranteed they are well-formed).
+func poolFromConfig(cfg *config.Config) (*balancer.Pool, error) {
+	if len(cfg.Backends) == 0 {
+		return nil, fmt.Errorf("proxy: no backends configured")
+	}
+	backends := make([]*balancer.Backend, 0, len(cfg.Backends))
+	for _, b := range cfg.Backends {
+		backend, err := balancer.NewBackend(b.URL, b.Weight)
+		if err != nil {
+			return nil, fmt.Errorf("proxy: %w", err)
+		}
+		backends = append(backends, backend)
+	}
+	return balancer.NewPool(backends), nil
 }
 
 // ListenAndServe starts serving on the configured listen address and blocks
