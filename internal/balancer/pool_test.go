@@ -21,7 +21,9 @@ func TestPool_HealthyFiltersUnhealthy(t *testing.T) {
 		t.Fatalf("initial healthy = %d, want 3", got)
 	}
 
-	b2.SetHealthy(false)
+	if !p.SetHealthy(b2, false) {
+		t.Fatal("SetHealthy(b2, false) reported no change")
+	}
 	healthy := p.Healthy()
 	if len(healthy) != 2 {
 		t.Fatalf("healthy after down = %d, want 2", len(healthy))

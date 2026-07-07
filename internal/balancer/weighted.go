@@ -34,6 +34,8 @@ func (w *weighted) Next(_ *http.Request, candidates []*Backend) (*Backend, error
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	w.pruneAbsent(candidates)
+
 	var (
 		best   *Backend
 		bestCW int
@@ -50,5 +52,26 @@ func (w *weighted) Next(_ *http.Request, candidates []*Backend) (*Backend, error
 	// The winner "pays" the total weight, so lower-weight peers catch up on
 	// subsequent calls.
 	w.current[best] -= total
-	return best, nil
+	return reserve(best)
+}
+
+// pruneAbsent drops current-weight state for backends no longer among the
+// candidates. Without this, a backend that leaves the healthy set (e.g. a health
+// check marks it down) keeps its stale — possibly deeply negative — current
+// weight and, on return, is either starved or burst-served, drifting the served
+// ratio away from the configured weights. Pruning lets a returning backend
+// restart fair at zero. The guard keeps the steady state (no churn) allocation-free.
+func (w *weighted) pruneAbsent(candidates []*Backend) {
+	if len(w.current) <= len(candidates) {
+		return
+	}
+	present := make(map[*Backend]struct{}, len(candidates))
+	for _, b := range candidates {
+		present[b] = struct{}{}
+	}
+	for b := range w.current {
+		if _, ok := present[b]; !ok {
+			delete(w.current, b)
+		}
+	}
 }

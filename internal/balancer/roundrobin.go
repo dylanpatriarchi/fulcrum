@@ -25,5 +25,5 @@ func (rr *roundRobin) Next(_ *http.Request, candidates []*Backend) (*Backend, er
 	// Add returns the post-increment value; subtract 1 so the first pick is
 	// index 0. Unsigned modulo keeps the index in range as the cursor wraps.
 	i := (rr.cursor.Add(1) - 1) % uint64(n)
-	return candidates[i], nil
+	return reserve(candidates[i])
 }

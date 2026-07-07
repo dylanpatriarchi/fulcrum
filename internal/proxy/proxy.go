@@ -45,12 +45,15 @@ func New(pool *balancer.Pool, strategy balancer.Strategy, logger *slog.Logger) *
 // backend is healthy it responds 503; if the chosen upstream errors it responds
 // 502 (failover is added in a later milestone).
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Next reserves an in-flight slot on the chosen backend (see the Strategy
+	// reservation contract); we release it once the request completes.
 	backend, err := p.strategy.Next(r, p.pool.Healthy())
 	if err != nil {
 		p.log.Warn("no healthy backends", "method", r.Method, "path", r.URL.Path, "err", err)
 		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	defer backend.Release()
 
 	rp := p.proxies[backend]
 	if rp == nil {
@@ -64,8 +67,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// NOTE: proxy.max_in_flight_per_backend is parsed and validated but not yet
 	// enforced here; the concurrency cap (reject/shed when a backend is at its
 	// limit) is implemented together with timeouts in Milestone 6.
-	backend.Acquire()
-	defer backend.Release()
 	rp.ServeHTTP(w, r)
 }
 

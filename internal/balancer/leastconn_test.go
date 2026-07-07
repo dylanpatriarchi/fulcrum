@@ -6,7 +6,7 @@ import (
 )
 
 func TestLeastConn_EmptyCandidates(t *testing.T) {
-	if _, err := (leastConn{}).Next(nil, nil); err != ErrNoHealthyBackends {
+	if _, err := (&leastConn{}).Next(nil, nil); err != ErrNoHealthyBackends {
 		t.Errorf("Next(empty) error = %v, want ErrNoHealthyBackends", err)
 	}
 }
@@ -22,7 +22,7 @@ func TestLeastConn_PicksFewestConnections(t *testing.T) {
 	b1.Acquire()
 	b3.Acquire()
 
-	got, err := (leastConn{}).Next(nil, candidates)
+	got, err := (&leastConn{}).Next(nil, candidates)
 	if err != nil {
 		t.Fatalf("Next(): %v", err)
 	}
@@ -44,7 +44,7 @@ func TestLeastConn_ConcurrentConsistency(t *testing.T) {
 	for i := range backends {
 		backends[i] = mustBackend(t, "http://backend")
 	}
-	lc := leastConn{}
+	lc := &leastConn{}
 
 	var wg sync.WaitGroup
 	wg.Add(nGoroutines)
@@ -57,9 +57,9 @@ func TestLeastConn_ConcurrentConsistency(t *testing.T) {
 					t.Errorf("Next(): %v", err)
 					return
 				}
-				b.Acquire()
-				// Simulate a unit of work by immediately releasing; the point is
-				// to exercise the counters under contention, not to hold load.
+				// Next already reserved (Acquire) the backend; releasing here
+				// completes the simulated request. The point is to exercise the
+				// counters under contention.
 				b.Release()
 			}
 		}()
@@ -79,15 +79,14 @@ func TestLeastConn_BalancesUnderHold(t *testing.T) {
 	b1 := mustBackend(t, "http://a.com")
 	b2 := mustBackend(t, "http://b.com")
 	candidates := []*Backend{b1, b2}
-	lc := leastConn{}
+	lc := &leastConn{}
 
-	// Each iteration picks the least-loaded backend and holds the connection.
+	// Each iteration picks the least-loaded backend; Next reserves (Acquire) it,
+	// and we deliberately never release, holding the connection open.
 	for i := 0; i < 10; i++ {
-		b, err := lc.Next(nil, candidates)
-		if err != nil {
+		if _, err := lc.Next(nil, candidates); err != nil {
 			t.Fatalf("Next(): %v", err)
 		}
-		b.Acquire()
 	}
 
 	// With held connections, the two backends must be within one of each other.

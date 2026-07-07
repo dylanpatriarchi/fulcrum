@@ -3,28 +3,35 @@ package balancer
 import (
 	"math"
 	"net/http"
+	"sync"
 )
 
 // leastConn selects the candidate with the fewest in-flight requests, reading
-// each backend's atomic active-connection counter. It holds no state of its own
-// and is race-free.
+// each backend's atomic active-connection counter.
 //
-// Selection and the subsequent Acquire are not a single atomic step, so two
-// concurrent picks may briefly choose the same backend; this is the accepted,
-// self-correcting behaviour of least-connections balancing (the next pick sees
-// the incremented count).
-type leastConn struct{}
-
-func init() {
-	register("least-connections", func() Strategy { return leastConn{} })
+// Selection and the reservation (Acquire) are performed together under a mutex,
+// so concurrent picks are serialised: each observes the previous pick's
+// increment. This prevents a simultaneous burst on an idle pool from all
+// selecting the same backend (which a lock-free read-then-acquire would allow).
+// The scan is O(candidates) and cheap, so the lock is not a real bottleneck.
+type leastConn struct {
+	mu sync.Mutex
 }
 
-func (leastConn) Name() string { return "least-connections" }
+func init() {
+	register("least-connections", func() Strategy { return &leastConn{} })
+}
 
-func (leastConn) Next(_ *http.Request, candidates []*Backend) (*Backend, error) {
+func (*leastConn) Name() string { return "least-connections" }
+
+func (lc *leastConn) Next(_ *http.Request, candidates []*Backend) (*Backend, error) {
 	if len(candidates) == 0 {
 		return nil, ErrNoHealthyBackends
 	}
+
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+
 	var (
 		best  *Backend
 		least int64 = math.MaxInt64
@@ -34,5 +41,5 @@ func (leastConn) Next(_ *http.Request, candidates []*Backend) (*Backend, error) 
 			best, least = b, c
 		}
 	}
-	return best, nil
+	return reserve(best)
 }

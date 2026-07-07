@@ -140,9 +140,9 @@ func TestProxy_ServiceUnavailableWhenNoHealthyBackends(t *testing.T) {
 	defer backend.Close()
 
 	p, pool := newTestProxy(t, backend.URL)
-	// Mark every backend unhealthy.
+	// Mark every backend unhealthy (through the pool so the snapshot refreshes).
 	for _, b := range pool.All() {
-		b.SetHealthy(false)
+		pool.SetHealthy(b, false)
 	}
 
 	front := httptest.NewServer(p)
