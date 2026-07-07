@@ -19,7 +19,7 @@ type leastConn struct {
 }
 
 func init() {
-	register("least-connections", func() Strategy { return &leastConn{} })
+	register("least-connections", func(Options) Strategy { return &leastConn{} })
 }
 
 func (*leastConn) Name() string { return "least-connections" }

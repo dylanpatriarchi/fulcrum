@@ -195,6 +195,48 @@ proxy:
 	}
 }
 
+func TestParse_AdminAndPassiveDefaults(t *testing.T) {
+	const minimal = `
+listen: ":9000"
+strategy: random
+backends:
+  - url: "http://example.com"
+`
+	c, err := Parse([]byte(minimal))
+	if err != nil {
+		t.Fatalf("Parse() unexpected error: %v", err)
+	}
+	if c.Proxy.PassiveMaxFails != 3 {
+		t.Errorf("default PassiveMaxFails = %d, want 3", c.Proxy.PassiveMaxFails)
+	}
+	if c.Admin.Listen != ":9090" {
+		t.Errorf("default Admin.Listen = %q, want :9090", c.Admin.Listen)
+	}
+}
+
+func TestParse_DisableViaExplicitZeroAndEmpty(t *testing.T) {
+	const yaml = `
+listen: ":9000"
+strategy: random
+backends:
+  - url: "http://example.com"
+proxy:
+  passive_max_fails: 0
+admin:
+  listen: ""
+`
+	c, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse() unexpected error: %v", err)
+	}
+	if c.Proxy.PassiveMaxFails != 0 {
+		t.Errorf("PassiveMaxFails = %d, want 0 (disabled)", c.Proxy.PassiveMaxFails)
+	}
+	if c.Admin.Listen != "" {
+		t.Errorf("Admin.Listen = %q, want empty (disabled)", c.Admin.Listen)
+	}
+}
+
 func TestLoad_FileNotFound(t *testing.T) {
 	_, err := Load(filepath.Join(t.TempDir(), "does-not-exist.yaml"))
 	if err == nil {

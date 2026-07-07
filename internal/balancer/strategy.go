@@ -37,9 +37,18 @@ func reserve(b *Backend) (*Backend, error) {
 	return b, nil
 }
 
+// Options carries construction-time configuration shared with strategies.
+type Options struct {
+	// TrustForwardedHeaders lets ip-hash derive the client IP from the
+	// X-Forwarded-For / X-Real-IP request headers. Enable it ONLY when Fulcrum
+	// sits behind a proxy you trust to set those headers; otherwise a client can
+	// forge them to steer its own routing. Default (false) hashes the TCP peer.
+	TrustForwardedHeaders bool
+}
+
 // Factory constructs a fresh Strategy instance (each has its own internal state,
 // e.g. a round-robin cursor).
-type Factory func() Strategy
+type Factory func(Options) Strategy
 
 // registry maps config names to strategy factories. It is populated by init()
 // functions in this package and is read-only afterwards, so no locking is needed.
@@ -54,13 +63,13 @@ func register(name string, f Factory) {
 	registry[name] = f
 }
 
-// New constructs the strategy registered under name.
-func New(name string) (Strategy, error) {
+// New constructs the strategy registered under name with the given options.
+func New(name string, opts Options) (Strategy, error) {
 	f, ok := registry[name]
 	if !ok {
 		return nil, fmt.Errorf("balancer: unknown strategy %q (available: %v)", name, Names())
 	}
-	return f(), nil
+	return f(opts), nil
 }
 
 // Names returns the sorted list of registered strategy names.

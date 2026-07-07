@@ -19,7 +19,14 @@ health_check:
   unhealthy_threshold: 3    # consecutive failures to mark a backend DOWN
 
 proxy:
-  request_timeout: 30s
-  max_retries: 2                # failover attempts (0 disables retry)
+  request_timeout: 30s          # end-to-end timeout per request (across retries)
+  max_retries: 2                # failover attempts on another backend (0 disables retry)
   max_in_flight_per_backend: 0  # cap of concurrent requests per backend (0 = unlimited)
   retry_non_idempotent: false   # retry POST/PATCH/etc. on failure
+  passive_max_fails: 3          # consecutive request failures before a backend is
+                                # passively marked down (0 disables passive checks)
+  trust_forwarded_headers: false # ip-hash: trust X-Forwarded-For/X-Real-IP for the
+                                 # client IP (enable ONLY behind a trusted proxy)
+
+admin:
+  listen: ":9090"               # Prometheus /metrics, /healthz, /stats (empty disables)

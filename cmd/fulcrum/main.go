@@ -44,8 +44,9 @@ func run(configPath string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Start active health checking; it stops when ctx is cancelled.
-	srv.StartHealthChecks(ctx)
+	// Start active health checking and the admin server; both stop when ctx is
+	// cancelled.
+	srv.StartBackground(ctx)
 
 	serveErr := make(chan error, 1)
 	go func() {
