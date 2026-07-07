@@ -17,7 +17,7 @@ via a reviewed PR.
 - [x] **M1** — Scaffold, YAML config + validation, single-backend reverse proxy
 - [x] **M2** — Pool + `Strategy` interface + round-robin (distribution test)
 - [x] **M3** — Weighted, least-connections (atomic), random, ip-hash
-- [ ] **M4** — Active health checks with a state machine + hysteresis
+- [x] **M4** — Active health checks with a state machine + hysteresis
 - [ ] **M5** — Passive health checks + bounded retry/failover
 - [ ] **M6** — Timeouts, max in-flight, graceful shutdown with draining
 - [ ] **M7** — Prometheus `/metrics`, structured logs, per-backend stats
@@ -42,6 +42,17 @@ source of truth — config validation rejects any name it does not implement.
 | `least-connections` | Fewest in-flight requests, read from atomic per-backend counters. |
 | `random` | Uniform random pick (`math/rand/v2`, concurrency-safe). |
 | `ip-hash` | Sticky sessions: a client IP is hashed (FNV-1a) to a stable backend. |
+
+## Health checking
+
+An active checker probes every backend on `health_check.interval` (a `GET` to
+`health_check.path`, bounded by `health_check.timeout`) and flips a backend's
+state only after enough **consecutive** results — `unhealthy_threshold` failures
+to remove it from rotation, `healthy_threshold` successes to restore it. This
+hysteresis stops a single flaky probe from flapping a backend in and out.
+
+Unhealthy backends are excluded from the pool the strategy sees, so traffic
+automatically reroutes; recovered backends re-enter on their own.
 
 ## Configuration
 
