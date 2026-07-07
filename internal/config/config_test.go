@@ -125,6 +125,24 @@ func TestParse_Invalid(t *testing.T) {
 			wantSub: "weight must be >= 1",
 		},
 		{
+			// Explicit weight: 0 must be rejected, not silently promoted to 1.
+			name:    "explicit zero weight",
+			yaml:    "listen: \":8080\"\nstrategy: random\nbackends:\n  - url: http://a.com\n    weight: 0\n",
+			wantSub: "weight must be >= 1",
+		},
+		{
+			// Explicit interval: 0s must be rejected, not silently defaulted.
+			name:    "explicit zero interval",
+			yaml:    "listen: \":8080\"\nstrategy: random\nbackends:\n  - url: http://a.com\nhealth_check:\n  interval: 0s\n",
+			wantSub: "interval must be > 0",
+		},
+		{
+			// Explicit healthy_threshold: 0 must be rejected, not defaulted to 2.
+			name:    "explicit zero healthy threshold",
+			yaml:    "listen: \":8080\"\nstrategy: random\nbackends:\n  - url: http://a.com\nhealth_check:\n  healthy_threshold: 0\n",
+			wantSub: "healthy_threshold must be >= 1",
+		},
+		{
 			name:    "unknown field",
 			yaml:    "listen: \":8080\"\nstrategy: random\nnope: true\nbackends:\n  - url: http://a.com\n",
 			wantSub: "parse",
@@ -150,6 +168,30 @@ func TestParse_Invalid(t *testing.T) {
 				t.Errorf("Parse() error = %q, want substring %q", err.Error(), tt.wantSub)
 			}
 		})
+	}
+}
+
+func TestParse_ZeroRetriesAndInFlightAreValid(t *testing.T) {
+	// Unlike thresholds, 0 is a legitimate value for these fields (no retries,
+	// unlimited in-flight) and must not be rejected.
+	const yaml = `
+listen: ":8080"
+strategy: random
+backends:
+  - url: http://a.com
+proxy:
+  max_retries: 0
+  max_in_flight_per_backend: 0
+`
+	c, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse() unexpected error: %v", err)
+	}
+	if c.Proxy.MaxRetries != 0 {
+		t.Errorf("MaxRetries = %d, want 0", c.Proxy.MaxRetries)
+	}
+	if c.Proxy.MaxInFlightPerBackend != 0 {
+		t.Errorf("MaxInFlightPerBackend = %d, want 0", c.Proxy.MaxInFlightPerBackend)
 	}
 }
 

@@ -1,7 +1,7 @@
 # Binaries
 /bin/
 /dist/
-fulcrum
+/fulcrum
 *.exe
 *.test
 *.out

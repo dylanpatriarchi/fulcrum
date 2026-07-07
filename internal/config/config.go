@@ -23,6 +23,17 @@ var knownStrategies = map[string]bool{
 	"ip-hash":           true,
 }
 
+// Default values applied when an optional field is omitted from the file.
+const (
+	defaultHealthPath          = "/healthz"
+	defaultHealthyThreshold    = 2
+	defaultUnhealthyThreshold  = 3
+	defaultHealthCheckInterval = 10 * time.Second
+	defaultHealthCheckTimeout  = 2 * time.Second
+	defaultRequestTimeout      = 30 * time.Second
+	defaultBackendWeight       = 1
+)
+
 // Config is the root configuration document.
 type Config struct {
 	Listen      string      `yaml:"listen"`
@@ -55,6 +66,91 @@ type Proxy struct {
 	RetryNonIdempotent    bool     `yaml:"retry_non_idempotent"`
 }
 
+// rawConfig mirrors Config but represents defaultable fields as pointers so we
+// can distinguish "field omitted" (nil → apply default) from an explicit zero
+// value (kept as-is → rejected by Validate). Required fields (listen, strategy)
+// stay plain: an omitted value becomes the zero value and validation rejects it.
+type rawConfig struct {
+	Listen      string         `yaml:"listen"`
+	Strategy    string         `yaml:"strategy"`
+	Backends    []rawBackend   `yaml:"backends"`
+	HealthCheck rawHealthCheck `yaml:"health_check"`
+	Proxy       rawProxy       `yaml:"proxy"`
+}
+
+type rawBackend struct {
+	URL    string `yaml:"url"`
+	Weight *int   `yaml:"weight"`
+}
+
+type rawHealthCheck struct {
+	Interval           *Duration `yaml:"interval"`
+	Timeout            *Duration `yaml:"timeout"`
+	Path               string    `yaml:"path"`
+	HealthyThreshold   *int      `yaml:"healthy_threshold"`
+	UnhealthyThreshold *int      `yaml:"unhealthy_threshold"`
+}
+
+type rawProxy struct {
+	// max_retries and max_in_flight_per_backend legitimately default to 0, so a
+	// plain value (omitted == explicit 0) is correct here.
+	RequestTimeout        *Duration `yaml:"request_timeout"`
+	MaxRetries            int       `yaml:"max_retries"`
+	MaxInFlightPerBackend int       `yaml:"max_in_flight_per_backend"`
+	RetryNonIdempotent    bool      `yaml:"retry_non_idempotent"`
+}
+
+// resolve converts the parsed raw document into a Config, applying defaults for
+// omitted fields while preserving explicit values (including invalid zeros) so
+// Validate can report them.
+func (r *rawConfig) resolve() *Config {
+	c := &Config{
+		Listen:   r.Listen,
+		Strategy: r.Strategy,
+		HealthCheck: HealthCheck{
+			Interval:           orDuration(r.HealthCheck.Interval, defaultHealthCheckInterval),
+			Timeout:            orDuration(r.HealthCheck.Timeout, defaultHealthCheckTimeout),
+			Path:               orString(r.HealthCheck.Path, defaultHealthPath),
+			HealthyThreshold:   orInt(r.HealthCheck.HealthyThreshold, defaultHealthyThreshold),
+			UnhealthyThreshold: orInt(r.HealthCheck.UnhealthyThreshold, defaultUnhealthyThreshold),
+		},
+		Proxy: Proxy{
+			RequestTimeout:        orDuration(r.Proxy.RequestTimeout, defaultRequestTimeout),
+			MaxRetries:            r.Proxy.MaxRetries,
+			MaxInFlightPerBackend: r.Proxy.MaxInFlightPerBackend,
+			RetryNonIdempotent:    r.Proxy.RetryNonIdempotent,
+		},
+	}
+	for _, rb := range r.Backends {
+		c.Backends = append(c.Backends, Backend{
+			URL:    rb.URL,
+			Weight: orInt(rb.Weight, defaultBackendWeight),
+		})
+	}
+	return c
+}
+
+func orInt(p *int, def int) int {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func orDuration(p *Duration, def time.Duration) Duration {
+	if p == nil {
+		return Duration(def)
+	}
+	return *p
+}
+
+func orString(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
 // Load reads, parses and validates a configuration file.
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
@@ -66,44 +162,17 @@ func Load(path string) (*Config, error) {
 
 // Parse decodes and validates configuration from raw YAML bytes.
 func Parse(raw []byte) (*Config, error) {
-	var c Config
+	var rc rawConfig
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true) // reject unknown keys — catches typos early.
-	if err := dec.Decode(&c); err != nil {
+	if err := dec.Decode(&rc); err != nil {
 		return nil, fmt.Errorf("config: parse: %w", err)
 	}
-	c.applyDefaults()
+	c := rc.resolve()
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	return &c, nil
-}
-
-// applyDefaults fills unset optional fields with sensible values.
-func (c *Config) applyDefaults() {
-	for i := range c.Backends {
-		if c.Backends[i].Weight == 0 {
-			c.Backends[i].Weight = 1
-		}
-	}
-	if c.HealthCheck.Path == "" {
-		c.HealthCheck.Path = "/healthz"
-	}
-	if c.HealthCheck.HealthyThreshold == 0 {
-		c.HealthCheck.HealthyThreshold = 2
-	}
-	if c.HealthCheck.UnhealthyThreshold == 0 {
-		c.HealthCheck.UnhealthyThreshold = 3
-	}
-	if c.HealthCheck.Interval == 0 {
-		c.HealthCheck.Interval = Duration(10 * time.Second)
-	}
-	if c.HealthCheck.Timeout == 0 {
-		c.HealthCheck.Timeout = Duration(2 * time.Second)
-	}
-	if c.Proxy.RequestTimeout == 0 {
-		c.Proxy.RequestTimeout = Duration(30 * time.Second)
-	}
+	return c, nil
 }
 
 // Validate reports the first configuration error found, if any.
