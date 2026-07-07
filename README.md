@@ -15,7 +15,7 @@ Built in 8 milestones; each is runnable, race-free (`go test -race`), and merged
 via a reviewed PR.
 
 - [x] **M1** — Scaffold, YAML config + validation, single-backend reverse proxy
-- [ ] **M2** — Pool + `Strategy` interface + round-robin (distribution test)
+- [x] **M2** — Pool + `Strategy` interface + round-robin (distribution test)
 - [ ] **M3** — Weighted, least-connections (atomic), random, ip-hash
 - [ ] **M4** — Active health checks with a state machine + hysteresis
 - [ ] **M5** — Passive health checks + bounded retry/failover
