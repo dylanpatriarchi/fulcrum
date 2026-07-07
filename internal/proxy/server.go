@@ -10,16 +10,18 @@ import (
 
 	"github.com/dylanpatriarchi/fulcrum/internal/balancer"
 	"github.com/dylanpatriarchi/fulcrum/internal/config"
+	"github.com/dylanpatriarchi/fulcrum/internal/health"
 )
 
 // Server wires a configuration into a runnable HTTP reverse-proxy server.
 type Server struct {
-	http *http.Server
-	log  *slog.Logger
+	http    *http.Server
+	checker *health.Checker
+	log     *slog.Logger
 }
 
 // NewServer builds a Server from cfg: it constructs the backend pool, the
-// configured strategy and the balancing proxy handler.
+// configured strategy, the balancing proxy handler and the active health checker.
 func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	pool, err := poolFromConfig(cfg)
 	if err != nil {
@@ -31,6 +33,14 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	}
 
 	handler := New(pool, strategy, logger)
+	checker := health.NewChecker(pool, health.Options{
+		Path:               cfg.HealthCheck.Path,
+		Interval:           cfg.HealthCheck.Interval.Std(),
+		Timeout:            cfg.HealthCheck.Timeout.Std(),
+		HealthyThreshold:   cfg.HealthCheck.HealthyThreshold,
+		UnhealthyThreshold: cfg.HealthCheck.UnhealthyThreshold,
+	}, logger)
+
 	srv := &http.Server{
 		Addr:    cfg.Listen,
 		Handler: handler,
@@ -38,7 +48,13 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		// land in a later milestone.
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	return &Server{http: srv, log: logger}, nil
+	return &Server{http: srv, checker: checker, log: logger}, nil
+}
+
+// StartHealthChecks launches the active health checker in the background. It
+// returns immediately; the checker runs until ctx is cancelled.
+func (s *Server) StartHealthChecks(ctx context.Context) {
+	go s.checker.Run(ctx)
 }
 
 // poolFromConfig builds the backend pool from configuration, parsing each URL
